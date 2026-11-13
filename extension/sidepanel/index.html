@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10151d">
+    <title>LectureMate AI</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="transcript-engine.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="LectureMate AI home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" focusable="false">
+              <path d="M7 8.5c3.5-1.6 7-1.4 9 0v15c-2-1.4-5.5-1.6-9 0v-15Z"></path>
+              <path d="M25 8.5c-3.5-1.6-7-1.4-9 0v15c2-1.4 5.5-1.6 9 0v-15Z"></path>
+              <path d="m23.3 4.7.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1Z"></path>
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <span class="brand-name">LectureMate <span>AI</span></span>
+            <span class="brand-caption">YOUR LEARNING COMPANION</span>
+          </span>
+        </a>
+
+        <div class="header-actions">
+          <span class="connection-status"><span class="status-dot" id="connectionDot"></span><span id="connectionLabel">Disconnected</span></span>
+          <button class="icon-button focus-button" id="focusButton" type="button" aria-label="Expand focus mode" title="Expand focus mode">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M7 3H3v4M13 3h4v4M17 13v4h-4M7 17H3v-4"></path>
+            </svg>
+          </button>
+          <button class="icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M8.2 2.8h3.6l.5 2a5.6 5.6 0 0 1 1.2.7l2-.7 1.8 3.1-1.5 1.4a6 6 0 0 1 0 1.4l1.5 1.4-1.8 3.1-2-.7a5.6 5.6 0 0 1-1.2.7l-.5 2H8.2l-.5-2a5.6 5.6 0 0 1-1.2-.7l-2 .7-1.8-3.1 1.5-1.4a6 6 0 0 1 0-1.4L2.7 7.9l1.8-3.1 2 .7a5.6 5.6 0 0 1 1.2-.7l.5-2Z"></path>
+              <circle cx="10" cy="10" r="2.2"></circle>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <section class="video-card" aria-labelledby="videoCardHeading">
+          <div class="section-heading">
+            <div class="section-label">
+              <span class="section-icon video-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><rect x="2.5" y="4" width="15" height="12" rx="2"></rect><path d="m8 7 5 3-5 3V7Z"></path></svg>
+              </span>
+              <h1 id="videoCardHeading">VIDEO CONTEXT</h1>
+            </div>
+            <span class="context-tag" id="videoContextTag">DISCONNECTED</span>
+          </div>
+          <p class="video-title" id="videoTitle">No YouTube video detected</p>
+          <p class="video-url" id="videoUrl">Open a YouTube watch page to connect.</p>
+          <p class="video-id" id="videoId">Video ID: --</p>
+          <div class="video-details">
+            <span class="playback-state"><span class="state-indicator" id="playbackDot"></span><span id="playbackState">Not connected</span></span>
+            <span class="playback-time" id="playbackTime">--:-- / --:--</span>
+          </div>
+          <div class="transcript-status">
+            <span class="transcript-indicator" aria-hidden="true"></span>
+            <span>Transcript analysis <strong>not available yet</strong></span>
+          </div>
+        </section>
+
+        <section class="transcript-card" aria-labelledby="transcriptHeading">
+          <div class="section-heading">
+            <div class="section-label">
+              <span class="section-icon transcript-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M5 3.5h7l3 3v10H5z"></path><path d="M12 3.5v3h3M7.5 10h5M7.5 13h5"></path></svg>
+              </span>
+              <h2 id="transcriptHeading">TRANSCRIPT</h2>
+            </div>
+            <span class="transcript-tag" id="transcriptStateTag">MISSING</span>
+          </div>
+          <div class="transcript-metrics">
+            <div><span>Source</span><strong id="transcriptSource">None</strong></div>
+            <div><span>Segments</span><strong id="transcriptSegmentCount">0</strong></div>
+            <div><span>Lecture duration</span><strong id="transcriptDuration">Unavailable</strong></div>
+            <div><span>Coverage</span><strong id="transcriptCoverage">Not measured</strong></div>
+          </div>
+          <p class="transcript-processing" id="transcriptProcessing" role="status" aria-live="polite">No transcript loaded. Import a VTT/SRT file or paste timestamped captions.</p>
+          <p class="transcript-chunks" id="transcriptChunkCount"></p>
+          <div class="caption-capture">
+            <button class="caption-capture-button" id="captionCaptureToggle" type="button">Start on-screen caption capture</button>
+            <p class="caption-capture-hint" id="captionCaptureHint">Turn on YouTube captions first. Only captions visibly shown while you watch are captured; this is not a complete transcript.</p>
+          </div>
+          <div class="transcript-preview" id="transcriptPreview" aria-label="Recent transcript segments"></div>
+          <div class="transcript-actions">
+            <input id="transcriptFile" class="file-input" type="file" accept=".vtt,.srt,text/vtt,application/x-subrip">
+            <label class="file-button" for="transcriptFile">Import VTT/SRT</label>
+            <button class="clear-transcript-button" id="clearTranscript" type="button" hidden>Clear</button>
+          </div>
+          <details class="paste-transcript">
+            <summary>Paste transcript text</summary>
+            <label class="sr-only" for="pasteFormat">Pasted transcript format</label>
+            <select id="pasteFormat" aria-label="Pasted transcript format">
+              <option value="vtt">WebVTT (.vtt)</option>
+              <option value="srt">SubRip (.srt)</option>
+            </select>
+            <label class="sr-only" for="transcriptPaste">Paste timestamped transcript</label>
+            <textarea id="transcriptPaste" rows="5" placeholder="Paste timestamped VTT or SRT cues here..."></textarea>
+            <button class="paste-transcript-button" id="loadPastedTranscript" type="button">Load pasted transcript</button>
+          </details>
+          <p class="transcript-privacy">Transcript stays in temporary browser-session storage. Recent segments are sent to the configured backend when you ask a chat question.</p>
+        </section>
+
+        <section class="conversation" aria-label="Conversation">
+          <div class="conversation-heading">
+            <div>
+              <h2>Study chat</h2>
+              <p>Ask questions as you learn</p>
+            </div>
+            <span class="context-badge">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 13 4v3.7c0 3-2 5-5 6.1-3-1.1-5-3.1-5-6.1V4l5-1.8Z"></path><path d="m5.8 7.8 1.5 1.5 3-3"></path></svg>
+              No lecture context
+            </span>
+          </div>
+
+          <div class="message-list" id="messageList" aria-live="polite" aria-relevant="additions">
+            <div class="welcome-card">
+              <span class="welcome-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.5l-1.8-5.9L4.5 10.8 10.2 9 12 3.5Z"></path><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"></path></svg>
+              </span>
+              <p class="welcome-eyebrow">WELCOME TO LECTUREMATE</p>
+              <h3>Make every lesson click.</h3>
+              <p class="welcome-copy">Ask questions about the current YouTube lesson. Recent transcript segments are included when available.</p>
+              <span class="welcome-note">Connect the backend and configure its provider key to use AI.</span>
+            </div>
+          </div>
+
+          <div class="quick-actions" aria-label="Quick actions">
+            <button type="button" data-prompt="Explain this concept: ">Explain this concept <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Visualise this concept: ">Visualise this concept <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Summarise this lecture">Summarise this lecture <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Quiz me on this lecture">Quiz me <span aria-hidden="true">↗</span></button>
+          </div>
+
+          <div class="composer-wrap">
+            <form class="composer" id="chatForm">
+              <label class="sr-only" for="messageInput">Your message</label>
+              <textarea id="messageInput" rows="1" placeholder="Ask a question..." maxlength="2000"></textarea>
+              <button class="send-button" type="submit" aria-label="Send message" title="Send message">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 9.2 17 3l-4.8 14-2.6-5.6L3 9.2Z"></path><path d="m9.6 11.4 3.6-3.6"></path></svg>
+              </button>
+            </form>
+            <p class="composer-note">Your question and recent transcript context are sent to the configured backend.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="settings-dialog" id="settingsDialog" aria-labelledby="settingsHeading">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="dialog-eyebrow">PREFERENCES</p>
+            <h2 id="settingsHeading">Settings</h2>
+          </div>
+          <button class="icon-button dialog-close" type="submit" aria-label="Close settings">×</button>
+        </div>
+        <p>Choose your local backend or the HTTPS URL of your Render service. Provider credentials must stay on the backend, never in the extension.</p>
+        <label class="backend-url-label" for="backendUrl">Backend URL</label>
+        <input class="backend-url-input" id="backendUrl" type="url" value="http://127.0.0.1:3000" spellcheck="false">
+        <button class="backend-url-save" id="saveBackendUrl" type="button">Save backend URL</button>
+        <p class="backend-url-status" id="backendSettingsStatus" role="status" aria-live="polite">Using the local backend.</p>
+        <button class="dialog-done" type="submit">Done</button>
+      </form>
+    </dialog>
+    <div class="toast" id="notice" role="status" aria-live="polite"></div>
+  </body>
+</html>
