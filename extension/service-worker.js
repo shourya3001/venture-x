@@ -16,8 +16,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   sendToExtensionPages({ type: "LECTUREMATE_TAB_CLOSED", tabId });
-  chrome.storage.session.remove(`lectureTranscript:${tabId}`).catch((error) => {
-    console.error("Could not clear the closed tab's temporary LectureMate transcript:", error);
+  chrome.storage.session.remove([
+    `lectureTranscript:${tabId}`,
+    `lectureChat:${tabId}`
+  ]).catch((error) => {
+    console.error("Could not clear the closed tab's temporary LectureMate session:", error);
   });
 });
 

@@ -378,6 +378,28 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === "SEEK_TO_TIMESTAMP") {
+      const page = getWatchPage();
+      const video = page ? getVideoElement() : null;
+      if (!page || !video || !Number.isFinite(message.seconds) || message.seconds < 0) {
+        sendResponse({ ok: false, error: "No active YouTube player is available for that timestamp." });
+        return false;
+      }
+      if (Number.isFinite(video.duration) && message.seconds > video.duration) {
+        sendResponse({ ok: false, error: "That timestamp is beyond the video duration." });
+        return false;
+      }
+      try {
+        video.currentTime = message.seconds;
+      } catch (_error) {
+        sendResponse({ ok: false, error: "The YouTube player rejected that timestamp." });
+        return false;
+      }
+      sendResponse({ ok: true, currentTime: finiteTime(video.currentTime) });
+      sendState("seeked");
+      return false;
+    }
+
     if (message.type === "GET_YOUTUBE_STATE") {
       scanPage();
       sendResponse(createState("snapshot"));

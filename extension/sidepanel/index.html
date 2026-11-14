@@ -7,6 +7,9 @@
     <title>LectureMate AI</title>
     <link rel="stylesheet" href="style.css">
     <script src="transcript-engine.js" defer></script>
+    <script src="chat-renderer.js" defer></script>
+    <script src="../shared/simulation-models.js" defer></script>
+    <script src="visualization-engine.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -62,7 +65,7 @@
           </div>
           <div class="transcript-status">
             <span class="transcript-indicator" aria-hidden="true"></span>
-            <span>Transcript analysis <strong>not available yet</strong></span>
+            <span>Lecture knowledge base <strong id="knowledgeStatus">not generated</strong></span>
           </div>
         </section>
 
@@ -84,6 +87,51 @@
           </div>
           <p class="transcript-processing" id="transcriptProcessing" role="status" aria-live="polite">No transcript loaded. Import a VTT/SRT file or paste timestamped captions.</p>
           <p class="transcript-chunks" id="transcriptChunkCount"></p>
+          <div class="analysis-controls">
+            <button class="analyze-lecture-button" id="analyzeLecture" type="button" disabled>Analyze lecture</button>
+            <p class="analysis-status" id="analysisStatus" role="status" aria-live="polite">Load a transcript for this video to build a knowledge base.</p>
+          </div>
+          <section class="knowledge-base" id="knowledgeBase" aria-label="Lecture knowledge base" hidden>
+            <h3>Lecture knowledge base</h3>
+            <p class="knowledge-summary" id="knowledgeSummary"></p>
+            <div class="knowledge-section">
+              <h4>Main topics</h4>
+              <ul id="knowledgeTopics"></ul>
+            </div>
+            <div class="knowledge-section">
+              <h4>Important concepts</h4>
+              <ul id="knowledgeConcepts"></ul>
+            </div>
+            <div class="knowledge-section">
+              <h4>Glossary</h4>
+              <ul id="knowledgeGlossary"></ul>
+            </div>
+            <div class="knowledge-section">
+              <h4>Equations explicitly present</h4>
+              <ul id="knowledgeEquations"></ul>
+            </div>
+            <div class="knowledge-section">
+              <h4>Examples</h4>
+              <ul id="knowledgeExamples"></ul>
+            </div>
+            <div class="knowledge-section">
+              <h4>Concept relationships</h4>
+              <ul id="knowledgeRelationships"></ul>
+            </div>
+            <div class="knowledge-section">
+              <h4>Potentially difficult explanations</h4>
+              <ul id="knowledgeDifficult"></ul>
+            </div>
+            <div class="knowledge-search">
+              <label for="knowledgeSearchInput">Search transcript and extracted knowledge</label>
+              <div>
+                <input id="knowledgeSearchInput" type="search" placeholder="Try a term or concept">
+                <button id="knowledgeSearchButton" type="button">Search</button>
+              </div>
+              <ul id="knowledgeSearchResults" aria-live="polite"></ul>
+            </div>
+            <p class="knowledge-provenance">Extracted claims include transcript evidence. Instructor statements and AI inferences are labeled separately. The analysis reflects only the supplied transcript.</p>
+          </section>
           <div class="caption-capture">
             <button class="caption-capture-button" id="captionCaptureToggle" type="button">Start on-screen caption capture</button>
             <p class="caption-capture-hint" id="captionCaptureHint">Turn on YouTube captions first. Only captions visibly shown while you watch are captured; this is not a complete transcript.</p>
@@ -105,7 +153,7 @@
             <textarea id="transcriptPaste" rows="5" placeholder="Paste timestamped VTT or SRT cues here..."></textarea>
             <button class="paste-transcript-button" id="loadPastedTranscript" type="button">Load pasted transcript</button>
           </details>
-          <p class="transcript-privacy">Transcript stays in temporary browser-session storage. Recent segments are sent to the configured backend when you ask a chat question.</p>
+          <p class="transcript-privacy">Transcript and knowledge base stay in temporary browser-session storage. Recent or keyword-matched segments and retrieved knowledge are sent to the configured backend when you ask a chat question.</p>
         </section>
 
         <section class="conversation" aria-label="Conversation">
@@ -114,10 +162,13 @@
               <h2>Study chat</h2>
               <p>Ask questions as you learn</p>
             </div>
-            <span class="context-badge">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 13 4v3.7c0 3-2 5-5 6.1-3-1.1-5-3.1-5-6.1V4l5-1.8Z"></path><path d="m5.8 7.8 1.5 1.5 3-3"></path></svg>
-              No lecture context
-            </span>
+            <div class="conversation-tools">
+              <span class="context-badge">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 13 4v3.7c0 3-2 5-5 6.1-3-1.1-5-3.1-5-6.1V4l5-1.8Z"></path><path d="m5.8 7.8 1.5 1.5 3-3"></path></svg>
+                No lecture context
+              </span>
+              <button class="reset-conversation-button" id="resetConversation" type="button">Reset conversation</button>
+            </div>
           </div>
 
           <div class="message-list" id="messageList" aria-live="polite" aria-relevant="additions">
@@ -127,17 +178,21 @@
               </span>
               <p class="welcome-eyebrow">WELCOME TO LECTUREMATE</p>
               <h3>Make every lesson click.</h3>
-              <p class="welcome-copy">Ask questions about the current YouTube lesson. Recent transcript segments are included when available.</p>
+              <p class="welcome-copy">Ask questions about the current YouTube lesson. Relevant transcript excerpts and extracted knowledge are included when available.</p>
               <span class="welcome-note">Connect the backend and configure its provider key to use AI.</span>
             </div>
           </div>
 
           <div class="quick-actions" aria-label="Quick actions">
-            <button type="button" data-prompt="Explain this concept: ">Explain this concept <span aria-hidden="true">↗</span></button>
-            <button type="button" data-prompt="Visualise this concept: ">Visualise this concept <span aria-hidden="true">↗</span></button>
-            <button type="button" data-prompt="Summarise this lecture">Summarise this lecture <span aria-hidden="true">↗</span></button>
-            <button type="button" data-prompt="Quiz me on this lecture">Quiz me <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Explain simply: ">Explain simply <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Explain with an example: ">Explain with an example <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Explain using the instructor's lecture terminology: ">Use lecture terminology <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Explain from the beginning, including prerequisites: ">Explain from the beginning <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Summarise this topic: ">Summarise this topic <span aria-hidden="true">↗</span></button>
+            <button type="button" data-prompt="Test my understanding by asking one question at a time.">Test my understanding <span aria-hidden="true">↗</span></button>
+            <button type="button" data-action="visualize">Visualise this concept <span aria-hidden="true">↗</span></button>
           </div>
+          <div class="visualization-panel" id="visualizationPanel" aria-live="polite" hidden></div>
 
           <div class="composer-wrap">
             <form class="composer" id="chatForm">
@@ -147,7 +202,7 @@
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 9.2 17 3l-4.8 14-2.6-5.6L3 9.2Z"></path><path d="m9.6 11.4 3.6-3.6"></path></svg>
               </button>
             </form>
-            <p class="composer-note">Your question and recent transcript context are sent to the configured backend.</p>
+            <p class="composer-note">Your question and retrieved lecture context are sent to the configured backend. Simulation controls calculate locally.</p>
           </div>
         </section>
       </main>

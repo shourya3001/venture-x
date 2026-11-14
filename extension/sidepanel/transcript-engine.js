@@ -164,6 +164,9 @@
     }
 
     const validSegments = segments
+      .map((segment) => Array.isArray(segment)
+        ? { start: segment[0], end: segment[1] }
+        : segment)
       .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) &&
         segment.start >= 0 && segment.end > segment.start);
     const intervals = validSegments
@@ -207,7 +210,95 @@
     };
   }
 
-  const api = { parseTranscript, chunkTranscript, calculateCoverage };
+  function tokenize(value, includeSingle = false) {
+    return (value.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [])
+      .filter((token) => token.length > 1 || includeSingle);
+  }
+
+  function searchKnowledgeBase(query, knowledgeBase, transcriptChunks, limit) {
+    const terms = [...new Set(tokenize(query))];
+    const singleCharacterTerms = (query.toLocaleLowerCase().match(/\b[\p{L}]\b/gu) || []);
+    const knownSymbols = new Set([
+      ...(knowledgeBase && Array.isArray(knowledgeBase.concepts) ? knowledgeBase.concepts : []),
+      ...(knowledgeBase && Array.isArray(knowledgeBase.equations) ? knowledgeBase.equations : [])
+    ].flatMap((item) => Array.isArray(item.variables)
+      ? item.variables.map((variable) => variable.symbol.toLocaleLowerCase())
+      : []));
+    singleCharacterTerms.forEach((term) => {
+      if (knownSymbols.has(term) && !terms.includes(term)) {
+        terms.push(term);
+      }
+    });
+    if (terms.length === 0) {
+      return [];
+    }
+
+    const candidates = [];
+    (Array.isArray(transcriptChunks) ? transcriptChunks : []).forEach((chunk) => {
+      candidates.push({
+        type: "transcript",
+        title: `Transcript · ${chunk.start}`,
+        text: chunk.text,
+        timestamps: [chunk.start],
+        evidence: [],
+        segmentIndexes: chunk.segments.map((segment) => segment.index)
+      });
+    });
+
+    const collections = [
+      ["topic", knowledgeBase && knowledgeBase.topics, (item) => item.topic,
+        (item) => (item.subtopics || []).join(" "), () => ""],
+      ["concept", knowledgeBase && knowledgeBase.concepts, (item) => item.concept,
+        (item) => [item.explanation, ...(item.prerequisites || []), ...(item.relatedConcepts || [])].join(" "),
+        (item) => (item.variables || []).map((variable) => variable.symbol).join(" ")],
+      ["glossary", knowledgeBase && knowledgeBase.glossary, (item) => item.term,
+        (item) => [item.abbreviation, item.definition, item.instructorTerminology].filter(Boolean).join(" "),
+        (item) => item.abbreviation || ""],
+      ["equation", knowledgeBase && knowledgeBase.equations, (item) => item.expression,
+        (item) => (item.variables || []).map((variable) => variable.meaning).join(" "),
+        (item) => (item.variables || []).map((variable) => variable.symbol).join(" ")],
+      ["example", knowledgeBase && knowledgeBase.examples, (item) => item.description, () => "", () => ""],
+      ["relationship", knowledgeBase && knowledgeBase.relationships,
+        (item) => `${item.from} ${item.relation} ${item.to}`, () => "", () => ""],
+      ["explanation", knowledgeBase && knowledgeBase.difficultExplanations,
+        (item) => item.explanation, (item) => item.reason || "", () => ""]
+    ];
+
+    collections.forEach(([type, items, getTitle, getBody, getKeywords]) => {
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        const title = getTitle(item);
+        const body = getBody(item);
+        candidates.push({
+          type,
+          title,
+          text: body || title,
+          keywordText: getKeywords(item),
+          timestamps: item.timestamps || (Number.isFinite(item.timestamp) ? [item.timestamp] : []),
+          evidence: item.evidence || [],
+          segmentIndexes: (item.evidence || []).map((evidence) => evidence.segmentIndex)
+        });
+      });
+    });
+
+    const scored = candidates.map((candidate) => {
+      const titleTokens = tokenize(`${candidate.title} ${candidate.keywordText || ""}`, true);
+      const textTokens = tokenize(candidate.text);
+      const titleCounts = new Map();
+      const textCounts = new Map();
+      titleTokens.forEach((token) => titleCounts.set(token, (titleCounts.get(token) || 0) + 1));
+      textTokens.forEach((token) => textCounts.set(token, (textCounts.get(token) || 0) + 1));
+      const score = terms.reduce((total, term) =>
+        total + (titleCounts.get(term) || 0) * 3 + (textCounts.get(term) || 0), 0);
+      return { ...candidate, score };
+    }).filter((candidate) => candidate.score > 0);
+
+    scored.sort((left, right) => right.score - left.score ||
+      (left.timestamps[0] || 0) - (right.timestamps[0] || 0));
+    const resultLimit = Number.isInteger(limit) && limit > 0 ? limit : 8;
+    return scored.slice(0, resultLimit);
+  }
+
+  const api = { parseTranscript, chunkTranscript, calculateCoverage, searchKnowledgeBase };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;
   }

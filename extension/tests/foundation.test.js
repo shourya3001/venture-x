@@ -39,7 +39,34 @@ test("side panel and focus page share the same application assets", () => {
   assert.match(sidePanel, /src="app\.js"/);
   assert.match(focusPage, /href="\.\.\/sidepanel\/style\.css"/);
   assert.match(focusPage, /src="\.\.\/sidepanel\/app\.js"/);
+  assert.match(sidePanel, /src="chat-renderer\.js"/);
+  assert.match(focusPage, /src="\.\.\/sidepanel\/chat-renderer\.js"/);
+  assert.match(sidePanel, /src="\.\.\/shared\/simulation-models\.js"/);
+  assert.match(focusPage, /src="\.\.\/shared\/simulation-models\.js"/);
+  assert.match(sidePanel, /src="visualization-engine\.js"/);
+  assert.match(focusPage, /src="\.\.\/sidepanel\/visualization-engine\.js"/);
   assert.match(focusPage, /Return to side panel/);
+  for (const page of [sidePanel, focusPage]) {
+    assert.match(page, /data-action="visualize"/);
+    assert.match(page, /id="visualizationPanel"/);
+  }
+});
+
+test("side panel and focus mode both expose the lecture analysis and retrieval controls", () => {
+  const sidePanel = readExtensionFile("sidepanel/index.html");
+  const focusPage = readExtensionFile("focus/index.html");
+
+  for (const page of [sidePanel, focusPage]) {
+    for (const id of [
+      "knowledgeStatus", "analyzeLecture", "analysisStatus", "knowledgeBase",
+      "knowledgeSummary", "knowledgeTopics", "knowledgeConcepts", "knowledgeGlossary",
+      "knowledgeEquations", "knowledgeExamples", "knowledgeRelationships", "knowledgeDifficult",
+      "knowledgeSearchInput", "knowledgeSearchButton", "knowledgeSearchResults"
+    ]) {
+      assert.match(page, new RegExp(`id="${id}"`));
+    }
+    assert.match(page, /temporary browser-session storage/);
+  }
 });
 
 test("the chat uses the local backend without embedding provider credentials", () => {
@@ -49,15 +76,26 @@ test("the chat uses the local backend without embedding provider credentials", (
   for (const id of ["messageList", "chatForm", "messageInput", "focusButton", "settingsButton"]) {
     assert.match(sidePanel, new RegExp(`id="${id}"`));
   }
-  assert.match(sidePanel, /Explain this concept/);
-  assert.match(sidePanel, /Visualise this concept/);
-  assert.match(sidePanel, /Summarise this lecture/);
-  assert.match(sidePanel, /Quiz me/);
+  for (const action of [
+    "Explain simply",
+    "Explain with an example",
+    "Use lecture terminology",
+    "Explain from the beginning",
+    "Summarise this topic",
+    "Test my understanding",
+    "Visualise this concept"
+  ]) {
+    assert.ok(sidePanel.includes(action));
+  }
+  assert.match(sidePanel, /id="resetConversation"/);
   assert.match(app, /fetch\(`\$\{backendBaseUrl\}\/api\/chat`/);
   assert.match(app, /chrome\.permissions\.request/);
   assert.match(sidePanel, /id="backendUrl"/);
   assert.match(app, /LECTUREMATE · WAITING/);
   assert.match(app, /invalid answer format/);
+  assert.match(app, /api\/visualize/);
+  assert.match(app, /Building a lecture-aware visual explanation/);
+  assert.match(app, /Visualization unavailable/);
   assert.doesNotMatch(app, /LLM_API_KEY|OPENAI_API_KEY|Bearer\s/);
 });
 
@@ -70,6 +108,8 @@ test("YouTube bridge tracks player events, rate-limits time updates, and support
   assert.match(bridge, /timeUpdateInterval = 1000/);
   assert.match(bridge, /yt-navigate-finish/);
   assert.match(bridge, /GET_YOUTUBE_STATE/);
+  assert.match(bridge, /SEEK_TO_TIMESTAMP/);
+  assert.match(bridge, /video\.currentTime = message\.seconds/);
   assert.match(bridge, /YOUTUBE_PLAYBACK_UPDATE/);
   assert.match(bridge, /function safelySendRuntimeMessage/);
   assert.match(bridge, /function isInvalidatedContext/);

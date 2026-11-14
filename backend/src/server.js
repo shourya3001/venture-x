@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const { createChatRouter } = require("./routes/chat");
 const { createAnalyzeRouter } = require("./routes/analyze");
+const { createVisualizationRouter } = require("./routes/visualize");
 const { createLlmProvider, LlmProviderError } = require("./services/llm-provider");
 
 function createCorsMiddleware(allowedOrigin) {
@@ -58,6 +59,8 @@ function mapError(error) {
     INVALID_PROVIDER_CONFIGURATION: 500,
     PROVIDER_TIMEOUT: 504,
     PROVIDER_UNAVAILABLE: 502,
+    PROVIDER_AUTHENTICATION_FAILED: 502,
+    PROVIDER_RATE_LIMITED: 429,
     UPSTREAM_ERROR: 502,
     INVALID_PROVIDER_RESPONSE: 502
   };
@@ -67,6 +70,8 @@ function mapError(error) {
     INVALID_PROVIDER_CONFIGURATION: "The AI provider configuration is invalid.",
     PROVIDER_TIMEOUT: "The AI provider took too long to respond. Please try again.",
     PROVIDER_UNAVAILABLE: "The AI provider could not be reached. Check the backend connection and try again.",
+    PROVIDER_AUTHENTICATION_FAILED: "The AI provider rejected its configured API key. Check LLM_API_KEY in backend/.env and restart the backend.",
+    PROVIDER_RATE_LIMITED: "The AI provider is rate-limiting requests. Wait a moment, then try again.",
     UPSTREAM_ERROR: "The AI provider rejected or failed the request. Check the provider configuration and try again.",
     INVALID_PROVIDER_RESPONSE: "The AI provider returned an unsupported response."
   };
@@ -91,13 +96,14 @@ function createApp(options = {}) {
 
   app.disable("x-powered-by");
   app.use(createCorsMiddleware(allowedOrigin));
-  app.use(express.json({ limit: "1mb", strict: true }));
+  app.use(express.json({ limit: "2mb", strict: true }));
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
   app.use("/api/chat", createChatRouter(llmProvider));
-  app.use("/api/analyze", createAnalyzeRouter());
+  app.use("/api/analyze", createAnalyzeRouter(llmProvider));
+  app.use("/api/visualize", createVisualizationRouter(llmProvider));
   app.use((_req, res) => {
     res.status(404).json({
       error: {
@@ -111,7 +117,7 @@ function createApp(options = {}) {
       res.status(413).json({
         error: {
           code: "REQUEST_TOO_LARGE",
-          message: "The request body exceeds the 1 MB limit."
+          message: "The request body exceeds the 2 MB limit."
         }
       });
       return;

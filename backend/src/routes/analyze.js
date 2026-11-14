@@ -1,16 +1,17 @@
 const express = require("express");
 const { validateRequest, validateAnalyzePayload } = require("../middleware/validate-request");
+const { createLectureAnalyzer } = require("../services/lecture-analyzer");
 
-function createAnalyzeRouter() {
+function createAnalyzeRouter(llmProvider) {
   const router = express.Router();
+  const lectureAnalyzer = createLectureAnalyzer(llmProvider);
 
-  router.post("/", validateRequest(validateAnalyzePayload), (_req, res) => {
-    res.status(501).json({
-      error: {
-        code: "ANALYSIS_NOT_IMPLEMENTED",
-        message: "Transcript analysis is reserved for a later LectureMate milestone."
-      }
-    });
+  router.post("/", validateRequest(validateAnalyzePayload), async (req, res, next) => {
+    try {
+      res.json(await lectureAnalyzer.analyzeLecture(req.validatedBody));
+    } catch (error) {
+      next(error);
+    }
   });
 
   return router;

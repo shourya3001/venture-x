@@ -1,6 +1,8 @@
 const messageList = document.querySelector("#messageList");
 const messageInput = document.querySelector("#messageInput");
 const chatForm = document.querySelector("#chatForm");
+const resetConversationButton = document.querySelector("#resetConversation");
+const visualizationPanel = document.querySelector("#visualizationPanel");
 const notice = document.querySelector("#notice");
 const settingsDialog = document.querySelector("#settingsDialog");
 const focusButton = document.querySelector("#focusButton");
@@ -17,6 +19,8 @@ let backendConfigPromise = null;
 let contextTabId = null;
 let noticeTimer;
 let latestPlaybackState = null;
+let chatHistory = [];
+let chatHistoryVideoId = null;
 
 const connectionLabel = document.querySelector("#connectionLabel");
 const connectionDot = document.querySelector("#connectionDot");
@@ -40,12 +44,31 @@ const transcriptPaste = document.querySelector("#transcriptPaste");
 const pasteFormat = document.querySelector("#pasteFormat");
 const loadPastedTranscript = document.querySelector("#loadPastedTranscript");
 const clearTranscriptButton = document.querySelector("#clearTranscript");
+const analyzeLectureButton = document.querySelector("#analyzeLecture");
+const analysisStatus = document.querySelector("#analysisStatus");
+const knowledgeStatus = document.querySelector("#knowledgeStatus");
+const knowledgeBasePanel = document.querySelector("#knowledgeBase");
+const knowledgeSummary = document.querySelector("#knowledgeSummary");
+const knowledgeTopics = document.querySelector("#knowledgeTopics");
+const knowledgeConcepts = document.querySelector("#knowledgeConcepts");
+const knowledgeGlossary = document.querySelector("#knowledgeGlossary");
+const knowledgeEquations = document.querySelector("#knowledgeEquations");
+const knowledgeExamples = document.querySelector("#knowledgeExamples");
+const knowledgeRelationships = document.querySelector("#knowledgeRelationships");
+const knowledgeDifficult = document.querySelector("#knowledgeDifficult");
+const knowledgeSearchInput = document.querySelector("#knowledgeSearchInput");
+const knowledgeSearchButton = document.querySelector("#knowledgeSearchButton");
+const knowledgeSearchResults = document.querySelector("#knowledgeSearchResults");
 const captionCaptureToggle = document.querySelector("#captionCaptureToggle");
 const captionCaptureHint = document.querySelector("#captionCaptureHint");
 let activeVideoId = null;
 let expectedLectureDuration = null;
 let transcriptSegments = [];
 let transcriptChunks = null;
+let transcriptSearchDocuments = null;
+let lectureKnowledgeBase = null;
+let analysisInProgress = false;
+let transcriptRevision = 0;
 let cachedCoverageDuration = Number.NaN;
 let cachedTranscriptCoverage = null;
 let currentTranscriptSource = "None";
@@ -140,10 +163,103 @@ function getTranscriptStorageKey(tabId) {
   return `lectureTranscript:${tabId}`;
 }
 
+function getChatStorageKey(tabId) {
+  return `lectureChat:${tabId}`;
+}
+
+function validateStoredChat(record) {
+  return Boolean(record && record.version === 1 &&
+    typeof record.videoId === "string" && /^[\w-]{11}$/.test(record.videoId) &&
+    Array.isArray(record.messages) && record.messages.length <= 40 &&
+    record.messages.every((message) => message &&
+      (message.role === "user" || message.role === "assistant") &&
+      typeof message.content === "string" && message.content.length <= 12000 &&
+      (message.citations === undefined || Array.isArray(message.citations) &&
+        message.citations.length <= 8 && message.citations.every((timestamp) =>
+          Number.isFinite(timestamp) && timestamp >= 0))));
+}
+
 function invalidateTranscriptAnalysis() {
   transcriptChunks = null;
+  transcriptSearchDocuments = null;
   cachedCoverageDuration = Number.NaN;
   cachedTranscriptCoverage = null;
+  transcriptRevision += 1;
+  lectureKnowledgeBase = null;
+  renderKnowledgeBase();
+  if (!analysisInProgress) {
+    analysisStatus.classList.remove("error");
+    analysisStatus.textContent = transcriptSegments.length > 0
+      ? "Analyze this transcript to create a timestamped knowledge base."
+      : "Load a transcript for this video to build a knowledge base.";
+  }
+}
+
+function validateKnowledgeBase(record) {
+  const collections = [
+    "topics", "concepts", "glossary", "equations", "examples",
+    "relationships", "difficultExplanations"
+  ];
+  return Boolean(record && record.version === 1 &&
+    typeof record.videoId === "string" && /^[\w-]{11}$/.test(record.videoId) &&
+    typeof record.summary === "string" &&
+    record.transcriptCompleteness && typeof record.transcriptCompleteness.status === "string" &&
+    record.summaryEvidence && Array.isArray(record.summaryEvidence) &&
+    collections.every((name) => Array.isArray(record[name])));
+}
+
+function renderKnowledgeList(element, items, getLabel) {
+  const entries = items.slice(0, 20).map((item) => {
+    const row = document.createElement("li");
+    row.textContent = getLabel(item);
+    const details = document.createElement("small");
+    const attribution = item.attribution === "instructor" ? "Instructor" : "AI inference";
+    const timestamps = (item.timestamps || []).map(formatTime).join(", ");
+    details.textContent = [attribution, timestamps].filter(Boolean).join(" · ");
+    row.append(details);
+    return row;
+  });
+  if (entries.length === 0) {
+    const empty = document.createElement("li");
+    empty.textContent = "No evidence-supported items extracted.";
+    entries.push(empty);
+  }
+  element.replaceChildren(...entries);
+}
+
+function renderKnowledgeBase() {
+  const available = validateKnowledgeBase(lectureKnowledgeBase) &&
+    lectureKnowledgeBase.videoId === activeVideoId;
+  knowledgeStatus.textContent = available ? "ready" : "not generated";
+  knowledgeBasePanel.hidden = !available;
+  analyzeLectureButton.disabled = analysisInProgress ||
+    transcriptSegments.length === 0 || transcriptVideoId !== activeVideoId;
+  if (!available) {
+    knowledgeSearchResults.replaceChildren();
+    return;
+  }
+
+  knowledgeSummary.textContent = lectureKnowledgeBase.summary ||
+    "No summary could be supported by the supplied transcript evidence.";
+  renderKnowledgeList(knowledgeTopics, lectureKnowledgeBase.topics, (item) =>
+    `${item.topic}${item.subtopics && item.subtopics.length ? ` — ${item.subtopics.join(", ")}` : ""}`);
+  renderKnowledgeList(knowledgeConcepts, lectureKnowledgeBase.concepts, (item) =>
+    `${item.concept}: ${item.explanation}${item.variables.length
+      ? ` Variables: ${item.variables.map((variable) =>
+        `${variable.symbol}${variable.meaning ? ` (${variable.meaning})` : ""}`).join(", ")}.`
+      : ""}`);
+  renderKnowledgeList(knowledgeGlossary, lectureKnowledgeBase.glossary, (item) =>
+    `${item.term}${item.abbreviation ? ` (${item.abbreviation})` : ""}: ${item.definition}`);
+  renderKnowledgeList(knowledgeEquations, lectureKnowledgeBase.equations, (item) =>
+    `${item.expression}${item.variables.length
+      ? ` · ${item.variables.map((variable) =>
+        `${variable.symbol}${variable.meaning ? ` (${variable.meaning})` : ""}`).join(", ")}`
+      : ""}`);
+  renderKnowledgeList(knowledgeExamples, lectureKnowledgeBase.examples, (item) => item.description);
+  renderKnowledgeList(knowledgeRelationships, lectureKnowledgeBase.relationships, (item) =>
+    `${item.from} ${item.relation} ${item.to}`);
+  renderKnowledgeList(knowledgeDifficult, lectureKnowledgeBase.difficultExplanations, (item) =>
+    `${item.explanation}${item.reason ? ` — ${item.reason}` : ""}`);
 }
 
 function renderTranscript() {
@@ -162,6 +278,7 @@ function renderTranscript() {
     transcriptChunkCount.textContent = "";
     transcriptProcessing.textContent = "No transcript loaded. Import a VTT/SRT file or paste timestamped captions.";
     clearTranscriptButton.hidden = true;
+    renderKnowledgeBase();
     return;
   }
 
@@ -196,6 +313,7 @@ function renderTranscript() {
   transcriptSource.textContent = currentTranscriptSource;
   transcriptChunkCount.textContent = `Prepared ${transcriptChunks.length} transcript chunks for later use.`;
   clearTranscriptButton.hidden = false;
+  renderKnowledgeBase();
   transcriptStateTag.classList.remove("ready", "complete");
 
   if (coverage.percentage === null) {
@@ -235,6 +353,7 @@ function validateStoredTranscript(record) {
         Number.isFinite(range[0]) && Number.isFinite(range[1]) &&
         range[0] >= 0 && range[1] > range[0])) &&
     (record.videoId === null || typeof record.videoId === "string" && /^[\w-]{11}$/.test(record.videoId)) &&
+    (record.knowledgeBase === undefined || validateKnowledgeBase(record.knowledgeBase)) &&
     Array.isArray(record.segments) &&
     record.segments.every((segment) => segment &&
       Number.isFinite(segment.start) &&
@@ -264,6 +383,10 @@ async function loadTranscriptForTab(tabId) {
 
     transcriptSegments = record.segments;
     invalidateTranscriptAnalysis();
+    lectureKnowledgeBase = validateKnowledgeBase(record.knowledgeBase) &&
+      record.knowledgeBase.videoId === record.videoId
+      ? record.knowledgeBase
+      : null;
     currentTranscriptSource = record.source;
     transcriptVideoId = record.videoId || null;
     transcriptCoverageTrusted = record.coverageTrusted !== false;
@@ -282,9 +405,55 @@ async function loadTranscriptForTab(tabId) {
   }
 }
 
+async function loadConversationForTab(tabId) {
+  if (!Number.isInteger(tabId) || !chrome.storage || !chrome.storage.session) {
+    return;
+  }
+  try {
+    const key = getChatStorageKey(tabId);
+    const saved = await chrome.storage.session.get(key);
+    if (contextTabId !== tabId) {
+      return;
+    }
+    const record = saved[key];
+    if (!validateStoredChat(record)) {
+      renderConversation();
+      return;
+    }
+    if (activeVideoId && record.videoId !== activeVideoId) {
+      chatHistory = [];
+      chatHistoryVideoId = activeVideoId;
+      clearVisualization();
+      await chrome.storage.session.remove(key);
+      renderConversation();
+      return;
+    }
+    chatHistory = record.messages;
+    chatHistoryVideoId = record.videoId;
+    renderConversation();
+  } catch (error) {
+    showNotice(`Could not restore this session's conversation: ${error.message}`);
+  }
+}
+
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "session" || !Number.isInteger(contextTabId)) {
     return;
+  }
+
+  const chatChange = changes[getChatStorageKey(contextTabId)];
+  if (chatChange) {
+    if (!chatChange.newValue) {
+      chatHistory = [];
+      chatHistoryVideoId = null;
+      renderConversation();
+    } else if (validateStoredChat(chatChange.newValue)) {
+      chatHistory = chatChange.newValue.messages;
+      chatHistoryVideoId = chatChange.newValue.videoId;
+      if (!activeVideoId || chatHistoryVideoId === activeVideoId) {
+        renderConversation();
+      }
+    }
   }
 
   const change = changes[getTranscriptStorageKey(contextTabId)];
@@ -307,6 +476,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
   transcriptSegments = change.newValue.segments;
   invalidateTranscriptAnalysis();
+  lectureKnowledgeBase = validateKnowledgeBase(change.newValue.knowledgeBase) &&
+    change.newValue.knowledgeBase.videoId === change.newValue.videoId
+    ? change.newValue.knowledgeBase
+    : null;
   currentTranscriptSource = change.newValue.source;
   transcriptVideoId = change.newValue.videoId || null;
   transcriptCoverageTrusted = change.newValue.coverageTrusted !== false;
@@ -332,7 +505,8 @@ async function persistTranscript() {
     videoId: activeVideoId,
     coverageTrusted: transcriptCoverageTrusted,
     coverageBasis: transcriptCoverageBasis,
-    segments: transcriptSegments
+    segments: transcriptSegments,
+    ...(validateKnowledgeBase(lectureKnowledgeBase) ? { knowledgeBase: lectureKnowledgeBase } : {})
   };
   const serializedRecord = JSON.stringify(record);
   if (new TextEncoder().encode(serializedRecord).length > maxSessionTranscriptBytes) {
@@ -352,7 +526,8 @@ async function importTranscriptText(text, format, source) {
     source: currentTranscriptSource,
     videoId: transcriptVideoId,
     coverageTrusted: transcriptCoverageTrusted,
-    coverageBasis: transcriptCoverageBasis
+    coverageBasis: transcriptCoverageBasis,
+    knowledgeBase: lectureKnowledgeBase
   };
   try {
     const result = LectureMateTranscript.parseTranscript(text, format);
@@ -389,6 +564,7 @@ async function importTranscriptText(text, format, source) {
     transcriptVideoId = previousTranscript.videoId;
     transcriptCoverageTrusted = previousTranscript.coverageTrusted;
     transcriptCoverageBasis = previousTranscript.coverageBasis;
+    lectureKnowledgeBase = previousTranscript.knowledgeBase;
     renderTranscript();
     transcriptProcessing.classList.add("error");
     transcriptProcessing.textContent = error.message || "The transcript could not be processed.";
@@ -414,6 +590,140 @@ function discardCurrentTranscript(statusMessage) {
       transcriptProcessing.textContent = `Could not clear the temporary transcript: ${error.message}`;
     });
   }
+}
+
+async function analyzeCurrentLecture() {
+  if (!latestPlaybackState || !latestPlaybackState.connected || !activeVideoId ||
+      transcriptSegments.length === 0 || transcriptVideoId !== activeVideoId) {
+    analysisStatus.textContent = "Connect the matching video and load its timestamped transcript first.";
+    analysisStatus.classList.add("error");
+    return;
+  }
+
+  const requestedVideoId = activeVideoId;
+  const requestedRevision = transcriptRevision;
+  const coverage = LectureMateTranscript.calculateCoverage(transcriptSegments, expectedLectureDuration);
+  const verifiedCoverage = LectureMateTranscript.calculateCoverage(
+    transcriptCoverageBasis,
+    expectedLectureDuration
+  );
+  const transcriptCompleteness = {
+    status: !transcriptCoverageTrusted
+      ? "partial"
+      : coverage.percentage === null
+        ? "unknown"
+        : verifiedCoverage.complete
+          ? "complete"
+          : "partial",
+    coveragePercentage: coverage.percentage
+  };
+  analysisInProgress = true;
+  analysisStatus.classList.remove("error");
+  analysisStatus.textContent = "Analyzing transcript chunks and checking evidence…";
+  renderKnowledgeBase();
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 300000);
+  try {
+    await backendConfigPromise;
+    if (backendBaseUrl !== localBackendUrl) {
+      const granted = await chrome.permissions.contains({
+        origins: [`${backendBaseUrl}/*`]
+      });
+      if (!granted) {
+        throw new Error("Open Settings and save the Render URL to grant its host permission.");
+      }
+    }
+
+    const response = await fetch(`${backendBaseUrl}/api/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        videoContext: {
+          videoId: latestPlaybackState.videoId,
+          title: latestPlaybackState.title.slice(0, 300),
+          url: latestPlaybackState.url,
+          currentTime: latestPlaybackState.currentTime,
+          duration: expectedLectureDuration
+        },
+        lessonMetadata: {
+          title: latestPlaybackState.title.slice(0, 300),
+          source: currentTranscriptSource
+        },
+        transcriptCompleteness,
+        transcript: transcriptSegments
+      }),
+      signal: controller.signal
+    });
+
+    let result;
+    try {
+      result = await response.json();
+    } catch (_error) {
+      throw new Error("The backend returned an invalid JSON response.");
+    }
+    if (!response.ok) {
+      throw new Error(result && result.error && typeof result.error.message === "string"
+        ? result.error.message
+        : `The backend request failed with status ${response.status}.`);
+    }
+    if (!validateKnowledgeBase(result) || result.videoId !== requestedVideoId) {
+      throw new Error("The backend returned an invalid knowledge base.");
+    }
+    if (activeVideoId !== requestedVideoId || transcriptRevision !== requestedRevision) {
+      throw new Error("The video or transcript changed during analysis. Analyze the current transcript again.");
+    }
+
+    lectureKnowledgeBase = result;
+    renderKnowledgeBase();
+    const completenessLabel = result.transcriptCompleteness.status;
+    analysisStatus.textContent =
+      `Knowledge base ready from ${result.transcriptCompleteness.analyzedChunks} chunk(s); transcript marked ${completenessLabel}.`;
+    await persistTranscript();
+  } catch (error) {
+    analysisStatus.classList.add("error");
+    if (error.name === "AbortError") {
+      analysisStatus.textContent = "Analysis timed out. Check the backend/provider and try again.";
+    } else if (error instanceof TypeError) {
+      analysisStatus.textContent = backendBaseUrl === localBackendUrl
+        ? "Could not connect to the local backend. Start it from the backend folder and check its extension origin."
+        : "Could not reach the Render backend. Check that the service is live and its extension origin is configured correctly.";
+    } else {
+      analysisStatus.textContent = error.message || "The transcript could not be analyzed.";
+    }
+  } finally {
+    window.clearTimeout(timeout);
+    analysisInProgress = false;
+    renderKnowledgeBase();
+  }
+}
+
+function renderKnowledgeSearchResults() {
+  const results = LectureMateTranscript.searchKnowledgeBase(
+    knowledgeSearchInput.value,
+    lectureKnowledgeBase,
+    transcriptChunks || [],
+    8
+  );
+  const rows = results.map((result) => {
+    const row = document.createElement("li");
+    row.className = "knowledge-result";
+    row.textContent = `${result.title}: ${result.text}`;
+    const details = document.createElement("small");
+    details.textContent = [
+      result.type,
+      ...result.timestamps.map(formatTime)
+    ].join(" · ");
+    row.append(details);
+    return row;
+  });
+  if (rows.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "knowledge-result";
+    empty.textContent = "No keyword matches in the supplied transcript or knowledge base.";
+    rows.push(empty);
+  }
+  knowledgeSearchResults.replaceChildren(...rows);
 }
 
 transcriptFile.addEventListener("change", async () => {
@@ -537,6 +847,10 @@ function renderPlaybackState(state) {
   }
 
   if ((activeVideoId && activeVideoId !== state.videoId) ||
+      (chatHistoryVideoId && chatHistoryVideoId !== state.videoId)) {
+    clearConversationForVideo(state.videoId);
+  }
+  if ((activeVideoId && activeVideoId !== state.videoId) ||
       (transcriptVideoId && transcriptVideoId !== state.videoId)) {
     discardCurrentTranscript("The video changed. Import a transcript for this video.");
   }
@@ -574,6 +888,18 @@ function renderPlaybackState(state) {
   } else {
     playbackState.textContent = "Playing";
     playbackDot.classList.add("playing");
+  }
+}
+
+function clearConversationForVideo(videoId) {
+  chatHistory = [];
+  chatHistoryVideoId = videoId || null;
+  renderConversation();
+  clearVisualization();
+  if (Number.isInteger(contextTabId) && chrome.storage && chrome.storage.session) {
+    chrome.storage.session.remove(getChatStorageKey(contextTabId)).catch((error) => {
+      showNotice(`Could not clear the previous conversation: ${error.message}`);
+    });
   }
 }
 
@@ -716,12 +1042,17 @@ function requestTabState(tabId) {
     transcriptVideoId = null;
     transcriptCoverageTrusted = true;
     transcriptCoverageBasis = [];
+    chatHistory = [];
+    chatHistoryVideoId = null;
+    clearVisualization();
+    renderConversation();
     transcriptPaste.value = "";
     renderTranscript();
   }
   contextTabId = tabId;
   showDisconnected("Checking for a supported YouTube video...");
   loadTranscriptForTab(tabId);
+  loadConversationForTab(tabId);
   refreshTabState(tabId);
 }
 
@@ -760,6 +1091,14 @@ function refreshActiveContext() {
 }
 
 captionCaptureToggle.addEventListener("click", startOrStopCaptionCapture);
+analyzeLectureButton.addEventListener("click", analyzeCurrentLecture);
+knowledgeSearchButton.addEventListener("click", renderKnowledgeSearchResults);
+knowledgeSearchInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    renderKnowledgeSearchResults();
+  }
+});
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "LECTUREMATE_PLAYBACK_UPDATE" && message.tabId === contextTabId) {
@@ -775,18 +1114,22 @@ chrome.runtime.onMessage.addListener((message) => {
     activeVideoId = null;
     expectedLectureDuration = null;
     transcriptSegments = [];
+    chatHistory = [];
+    chatHistoryVideoId = null;
+    clearVisualization();
     invalidateTranscriptAnalysis();
     currentTranscriptSource = "None";
     transcriptVideoId = null;
     transcriptCoverageTrusted = true;
     transcriptCoverageBasis = [];
+    renderConversation();
     updateCaptionCaptureControl(false);
     showDisconnected();
     renderTranscript();
   }
 });
 
-function addMessage(text, kind) {
+function addMessage(text, kind, citations) {
   const bubble = document.createElement("article");
   bubble.className = `chat-message ${kind}`;
 
@@ -794,30 +1137,208 @@ function addMessage(text, kind) {
   label.className = "message-label";
   label.textContent = kind === "user" ? "YOU" : "LECTUREMATE";
 
-  const content = document.createElement("span");
-  content.textContent = text;
+  const content = document.createElement("div");
+  content.className = "message-content";
+  if (kind === "assistant") {
+    renderAnswerContent(content, text, citations || []);
+  } else {
+    content.textContent = text;
+  }
 
   bubble.append(label, content);
   messageList.append(bubble);
   messageList.scrollTop = messageList.scrollHeight;
-  return { bubble, label, content };
+  return { bubble, label, content, citations: citations || [] };
 }
 
-function buildLessonContext() {
+function formatCitationTimestamp(seconds) {
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+  }
+  return `${String(Math.floor(totalSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function createTimestampButton(seconds, label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "timestamp-link";
+  button.textContent = `[${label || formatCitationTimestamp(seconds)}]`;
+  button.setAttribute("aria-label", `Seek to ${formatTime(seconds)}`);
+  button.addEventListener("click", () => seekToTimestamp(seconds));
+  return button;
+}
+
+function renderAnswerContent(content, answer, citations) {
+  const parts = LectureMateChatRenderer.splitAnswer(
+    answer,
+    citations,
+    latestPlaybackState && latestPlaybackState.duration
+  );
+  const nodes = parts.map((part) => part.type === "timestamp"
+    ? createTimestampButton(part.seconds, part.text)
+    : document.createTextNode(part.text));
+  if (citations.length > 0) {
+    const references = document.createElement("div");
+    references.className = "answer-references";
+    references.append(document.createTextNode("Lecture references:"));
+    citations.forEach((timestamp) => references.append(createTimestampButton(timestamp)));
+    nodes.push(references);
+  }
+  content.replaceChildren(...nodes);
+}
+
+function seekToTimestamp(seconds) {
+  if (!Number.isInteger(contextTabId) || !activeVideoId ||
+      !Number.isFinite(seconds) || seconds < 0 ||
+      Number.isFinite(expectedLectureDuration) && seconds > expectedLectureDuration) {
+    showNotice("This lecture timestamp is not available in the active video.");
+    return;
+  }
+
+  chrome.tabs.sendMessage(contextTabId, {
+    type: "SEEK_TO_TIMESTAMP",
+    seconds
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      showNotice("Could not reach the YouTube player. Reload the lecture tab and try again.");
+      return;
+    }
+    if (!response || !response.ok || !Number.isFinite(response.currentTime)) {
+      showNotice(response && response.error
+        ? response.error
+        : "The YouTube player could not seek to that timestamp.");
+      return;
+    }
+    if (latestPlaybackState && latestPlaybackState.videoId === activeVideoId) {
+      latestPlaybackState = {
+        ...latestPlaybackState,
+        currentTime: response.currentTime,
+        event: "seeked"
+      };
+      renderPlaybackState(latestPlaybackState);
+    }
+  });
+}
+
+function renderConversation() {
+  messageList.replaceChildren();
+  if (chatHistory.length === 0) {
+    const welcome = document.createElement("div");
+    welcome.className = "welcome-card";
+    const title = document.createElement("h3");
+    title.textContent = "Ask about this lecture.";
+    const copy = document.createElement("p");
+    copy.className = "welcome-copy";
+    copy.textContent = "Relevant lesson excerpts and knowledge will be retrieved for your question.";
+    welcome.append(title, copy);
+    messageList.append(welcome);
+    return;
+  }
+  chatHistory.forEach((message) => {
+    addMessage(message.content, message.role, message.citations || []);
+  });
+}
+
+async function persistChatHistory() {
+  if (!Number.isInteger(contextTabId) || !chatHistoryVideoId) {
+    throw new Error("Wait for the current video to connect before saving conversation history.");
+  }
+  await chrome.storage.session.set({
+    [getChatStorageKey(contextTabId)]: {
+      version: 1,
+      videoId: chatHistoryVideoId,
+      messages: chatHistory.slice(-40)
+    }
+  });
+}
+
+async function resetConversation() {
+  chatHistory = [];
+  chatHistoryVideoId = activeVideoId;
+  renderConversation();
+  clearVisualization();
+  try {
+    if (Number.isInteger(contextTabId)) {
+      await chrome.storage.session.remove(getChatStorageKey(contextTabId));
+    }
+    showNotice("Conversation history reset for this video.");
+  } catch (error) {
+    showNotice(`Could not clear the saved conversation: ${error.message}`);
+  }
+}
+
+function buildLessonContext(question) {
   if (transcriptSegments.length === 0 || transcriptVideoId !== activeVideoId) {
     return null;
   }
 
+  if (transcriptSearchDocuments === null) {
+    transcriptSearchDocuments = transcriptSegments.map((segment, index) => ({
+      start: segment.start,
+      end: segment.end,
+      text: segment.text,
+      segments: [{ index, start: segment.start, end: segment.end, text: segment.text }]
+    }));
+  }
+  const transcriptHits = LectureMateTranscript.searchKnowledgeBase(
+    question || "",
+    null,
+    transcriptSearchDocuments,
+    8
+  );
+  const knowledgeHits = LectureMateTranscript.searchKnowledgeBase(
+    question || "",
+    lectureKnowledgeBase,
+    [],
+    20
+  );
+  const playbackIndexes = [];
+
+  if (Number.isFinite(latestPlaybackState && latestPlaybackState.currentTime) &&
+      transcriptSegments.length > 0) {
+    let low = 0;
+    let high = transcriptSegments.length - 1;
+    let currentIndex = 0;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (transcriptSegments[middle].start <= latestPlaybackState.currentTime) {
+        currentIndex = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    for (let index = Math.max(0, currentIndex - 1);
+      index <= Math.min(transcriptSegments.length - 1, currentIndex + 1);
+      index += 1) {
+      playbackIndexes.push(index);
+    }
+  }
+  const relevantIndexes = [
+    ...playbackIndexes,
+    ...transcriptHits.flatMap((hit) => hit.segmentIndexes)
+  ];
+  if (relevantIndexes.length === 0) {
+    relevantIndexes.push(...transcriptHits.flatMap((hit) => hit.segmentIndexes));
+  }
+
   const selectedSegments = [];
+  const seenIndexes = new Set();
   let totalTextLength = 0;
-  for (let index = transcriptSegments.length - 1; index >= 0 && selectedSegments.length < 80; index -= 1) {
-    const segment = transcriptSegments[index];
-    if (segment.text.length > 2000) {
+  for (const index of relevantIndexes) {
+    if (seenIndexes.has(index) || selectedSegments.length >= 12) {
       continue;
     }
-    if (totalTextLength + segment.text.length > 24000) {
-      break;
+    const segment = transcriptSegments[index];
+    if (!segment || segment.text.length > 2000 ||
+        totalTextLength + segment.text.length > 8000) {
+      continue;
     }
+    seenIndexes.add(index);
     selectedSegments.push({
       start: segment.start,
       end: segment.end,
@@ -825,8 +1346,113 @@ function buildLessonContext() {
     });
     totalTextLength += segment.text.length;
   }
-  selectedSegments.reverse();
-  return { source: currentTranscriptSource, segments: selectedSegments };
+  selectedSegments.sort((left, right) => left.start - right.start);
+
+  const selectedGlossary = knowledgeHits
+    .filter((item) => item.type === "glossary")
+    .slice(0, 5)
+    .map((result) => lectureKnowledgeBase.glossary.find((item) => item.term === result.title))
+    .filter(Boolean)
+    .map((item) => ({
+      term: item.term,
+      abbreviation: item.abbreviation || "",
+      definition: item.definition,
+      instructorTerminology: item.instructorTerminology || "",
+      attribution: item.attribution,
+      timestamp: item.timestamp,
+      timestamps: item.timestamps.slice(0, 10),
+      evidence: item.evidence.slice(0, 3).map((entry) => ({
+        quote: entry.quote.slice(0, 500),
+        timestamp: entry.timestamp
+      }))
+    }));
+  const selectedConcepts = knowledgeHits
+    .filter((item) => item.type === "concept")
+    .slice(0, 5)
+    .map((result) => lectureKnowledgeBase.concepts.find((item) => item.concept === result.title))
+    .filter(Boolean)
+    .map((item) => ({
+      concept: item.concept,
+      explanation: item.explanation,
+      prerequisites: item.prerequisites.slice(0, 12),
+      relatedConcepts: item.relatedConcepts.slice(0, 12),
+      variables: item.variables.slice(0, 12),
+      attribution: item.attribution,
+      timestamps: item.timestamps.slice(0, 10),
+      evidence: item.evidence.slice(0, 3).map((entry) => ({
+        quote: entry.quote.slice(0, 500),
+        timestamp: entry.timestamp
+      }))
+    }));
+  const variables = selectedConcepts.flatMap((item) =>
+    item.variables
+      .filter((variable) => variable.meaning)
+      .map((variable) => ({
+        ...variable,
+        concept: item.concept,
+        timestamps: item.timestamps,
+        evidence: item.evidence
+      })))
+    .filter((item, index, list) =>
+      list.findIndex((other) => other.symbol === item.symbol && other.concept === item.concept) === index)
+    .slice(0, 12);
+  const retrievedKnowledge = knowledgeHits
+    .filter((item) => !["concept", "glossary"].includes(item.type))
+    .slice(0, 6)
+    .map((result) => ({
+      type: result.type,
+      title: result.title.slice(0, 200),
+      text: result.text.slice(0, 1200),
+      timestamps: result.timestamps.slice(0, 10),
+      evidence: result.evidence.slice(0, 3).map((item) => ({
+        quote: item.quote.slice(0, 500),
+        timestamp: item.timestamp
+      }))
+    }));
+  const transcriptCompleteness = lectureKnowledgeBase
+    ? {
+      status: lectureKnowledgeBase.transcriptCompleteness.status,
+      note: lectureKnowledgeBase.transcriptCompleteness.note.slice(0, 500),
+      coveragePercentage: lectureKnowledgeBase.transcriptCompleteness.coveragePercentage
+    }
+    : {
+      status: transcriptCoverageTrusted ? "unknown" : "partial",
+      note: "Answer only from supplied transcript excerpts; do not imply missing portions were covered."
+    };
+  return {
+    source: currentTranscriptSource,
+    segments: selectedSegments,
+    transcriptCompleteness,
+    summary: lectureKnowledgeBase ? lectureKnowledgeBase.summary.slice(0, 1800) : "",
+    summaryEvidence: lectureKnowledgeBase
+      ? lectureKnowledgeBase.summaryEvidence.slice(0, 3).map((item) => ({
+        quote: item.quote.slice(0, 500),
+        timestamp: item.timestamp
+      }))
+      : [],
+    glossary: selectedGlossary,
+    concepts: selectedConcepts,
+    variables,
+    retrievedKnowledge
+  };
+}
+
+function getConversationContext() {
+  if (chatHistoryVideoId !== activeVideoId) {
+    return [];
+  }
+  const selected = [];
+  let totalLength = 0;
+  for (let index = chatHistory.length - 1; index >= 0 && selected.length < 12; index -= 1) {
+    const message = chatHistory[index];
+    const content = message.content.slice(0, 4000);
+    if (totalLength + content.length > 28000) {
+      break;
+    }
+    selected.unshift({ role: message.role, content });
+    totalLength += content.length;
+  }
+  return selected;
 }
 
 function buildChatPayload(question) {
@@ -841,13 +1467,174 @@ function buildChatPayload(question) {
       title: latestPlaybackState.title.slice(0, 300),
       url: latestPlaybackState.url,
       currentTime: latestPlaybackState.currentTime,
-      duration: latestPlaybackState.duration
+      duration: latestPlaybackState.duration,
+      playbackState: latestPlaybackState.paused ? "paused" : "playing"
     },
-    lessonContext: buildLessonContext()
+    lessonContext: buildLessonContext(question),
+    conversationHistory: getConversationContext()
   };
 }
 
+function setChatBusy(busy) {
+  messageInput.disabled = busy;
+  chatForm.querySelector('button[type="submit"]').disabled = busy;
+  quickActionButtons.forEach((button) => {
+    button.disabled = busy;
+  });
+  resetConversationButton.disabled = busy;
+}
+
+function clearVisualization() {
+  visualizationPanel.replaceChildren();
+  visualizationPanel.hidden = true;
+}
+
+function showVisualizationStatus(message, state) {
+  const status = document.createElement("p");
+  status.className = `visualization-status ${state}`;
+  status.setAttribute("role", state === "loading" ? "status" : "alert");
+  status.textContent = message;
+  visualizationPanel.hidden = false;
+  visualizationPanel.replaceChildren(status);
+}
+
+function getVisualizationTarget() {
+  const lastQuestion = [...chatHistory].reverse().find((message) => message.role === "user");
+  const question = messageInput.value.trim() ||
+    (lastQuestion ? lastQuestion.content : "") ||
+    knowledgeSearchInput.value.trim();
+  if (!question) {
+    return null;
+  }
+  const matches = LectureMateTranscript.searchKnowledgeBase(
+    question,
+    lectureKnowledgeBase,
+    [],
+    12
+  );
+  const concept = matches.find((item) => item.type === "concept") ||
+    matches.find((item) => item.type === "glossary");
+  return {
+    question,
+    concept: concept ? concept.title.slice(0, 200) : question.slice(0, 200)
+  };
+}
+
+function showVisualizationFailure(message, question, concept) {
+  const card = document.createElement("section");
+  card.className = "visualization-card visualization-failure";
+  const title = document.createElement("h3");
+  title.textContent = "Visualization unavailable";
+  const details = document.createElement("p");
+  details.className = "visualization-status error";
+  details.textContent = message;
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "visualization-retry";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", () => sendVisualizationRequest(question, concept));
+  card.append(title, details, retry);
+  visualizationPanel.hidden = false;
+  visualizationPanel.replaceChildren(card);
+}
+
+async function sendVisualizationRequest(question, concept) {
+  const requestedVideoId = activeVideoId;
+  setChatBusy(true);
+  showVisualizationStatus("Building a lecture-aware visual explanation…", "loading");
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 90000);
+  try {
+    await backendConfigPromise;
+    if (backendBaseUrl !== localBackendUrl) {
+      const granted = await chrome.permissions.contains({
+        origins: [`${backendBaseUrl}/*`]
+      });
+      if (!granted) {
+        throw new Error("Open Settings and save the Render URL to grant its host permission.");
+      }
+    }
+
+    const payload = buildChatPayload(question);
+    delete payload.conversationHistory;
+    payload.concept = concept;
+    const response = await fetch(`${backendBaseUrl}/api/visualize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    let result;
+    try {
+      result = await response.json();
+    } catch (_error) {
+      throw new Error("The backend returned an invalid visualization response.");
+    }
+    if (!response.ok) {
+      throw new Error(result && result.error && typeof result.error.message === "string"
+        ? result.error.message
+        : `The visualization request failed with status ${response.status}.`);
+    }
+    if (activeVideoId !== requestedVideoId) {
+      throw new Error("The active video changed before the visualization arrived. Ask again for the current lecture.");
+    }
+    if (!result || !result.visualization) {
+      throw new Error("The backend returned a malformed visualization response.");
+    }
+    LectureMateVisualization.renderVisualization(visualizationPanel, result.visualization);
+    visualizationPanel.hidden = false;
+  } catch (error) {
+    if (activeVideoId !== requestedVideoId) {
+      clearVisualization();
+      showNotice("The active video changed before the visualization arrived.");
+      return;
+    }
+    if (error.name === "AbortError") {
+      showVisualizationFailure("The visualization request timed out. Check the backend and try again.",
+        question, concept);
+    } else if (error instanceof TypeError &&
+        ["Failed to fetch", "fetch failed"].includes(error.message)) {
+      showVisualizationFailure(backendBaseUrl === localBackendUrl
+        ? "Could not connect to the local backend. Start it from the backend folder and try again."
+        : "Could not reach the configured backend. Check that the service is live and try again.",
+      question, concept);
+    } else if (error.message && error.message.includes("not supported")) {
+      LectureMateVisualization.renderVisualization(visualizationPanel, {
+        version: 1,
+        type: "unsupported",
+        title: "Visualization model not supported",
+        explanation: "This model is not available yet. Try a flowchart, concept map, or step-by-step explanation."
+      });
+    } else {
+      showVisualizationFailure(error.message || "The backend could not create a safe visualization.",
+        question, concept);
+    }
+  } finally {
+    window.clearTimeout(timeout);
+    setChatBusy(false);
+  }
+}
+
+function addRetryButton(question, assistantMessage) {
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "retry-button";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", () => {
+    retry.remove();
+    assistantMessage.label.textContent = "LECTUREMATE · WAITING";
+    assistantMessage.bubble.classList.remove("error");
+    assistantMessage.bubble.classList.add("loading");
+    assistantMessage.content.textContent = "Retrying…";
+    sendChatQuestion(question, assistantMessage);
+  });
+  assistantMessage.bubble.append(retry);
+}
+
 async function sendChatQuestion(question, assistantMessage) {
+  const requestedVideoId = activeVideoId;
+  setChatBusy(true);
+  assistantMessage.bubble.querySelector(".retry-button")?.remove();
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 90000);
   try {
@@ -883,27 +1670,56 @@ async function sendChatQuestion(question, assistantMessage) {
         !result.answer.trim() || result.answer.length > 12000) {
       throw new Error("The backend returned an invalid answer format.");
     }
+    if (!Array.isArray(result.citations) || result.citations.length > 8 ||
+        result.citations.some((timestamp) => !Number.isFinite(timestamp) || timestamp < 0 ||
+          Number.isFinite(latestPlaybackState && latestPlaybackState.duration) &&
+            timestamp > latestPlaybackState.duration)) {
+      throw new Error("The backend returned invalid lecture timestamps.");
+    }
+    if (activeVideoId !== requestedVideoId) {
+      showNotice("The active video changed before the answer arrived. Ask again for the current lecture.");
+      return;
+    }
 
     assistantMessage.label.textContent = "LECTUREMATE";
-    assistantMessage.content.textContent = result.answer.trim();
+    assistantMessage.citations = result.citations;
+    renderAnswerContent(assistantMessage.content, result.answer.trim(), result.citations);
     assistantMessage.bubble.classList.remove("loading");
+    assistantMessage.bubble.classList.remove("error");
+    chatHistoryVideoId = requestedVideoId;
+    chatHistory.push(
+      { role: "user", content: question },
+      {
+        role: "assistant",
+        content: result.answer.trim(),
+        citations: result.citations
+      }
+    );
+    chatHistory = chatHistory.slice(-40);
+    try {
+      await persistChatHistory();
+    } catch (error) {
+      showNotice(`Answer received, but conversation history could not be saved: ${error.message}`);
+    }
   } catch (error) {
     assistantMessage.label.textContent = "LECTUREMATE · ERROR";
     assistantMessage.bubble.classList.remove("loading");
     assistantMessage.bubble.classList.add("error");
+    let message;
     if (error.name === "AbortError") {
-      assistantMessage.content.textContent = "The backend request timed out. Check that the backend and provider are responding, then try again.";
+      message = "The backend request timed out. Check that the backend and provider are responding, then retry.";
     } else if (error instanceof TypeError) {
-      assistantMessage.content.textContent = backendBaseUrl === localBackendUrl
+      message = backendBaseUrl === localBackendUrl
         ? "Could not connect to the local backend. Start it from the backend folder and check its extension origin."
         : "Could not reach the Render backend. Check that the service is live and its extension origin is configured correctly.";
     } else {
-      assistantMessage.content.textContent = error.message || "The backend could not complete the request.";
+      message = error.message || "The backend could not complete the request.";
     }
+    assistantMessage.content.textContent = message;
+    addRetryButton(question, assistantMessage);
   } finally {
     window.clearTimeout(timeout);
-    messageInput.disabled = false;
-    chatForm.querySelector('button[type="submit"]').disabled = false;
+    setChatBusy(false);
     messageInput.focus();
   }
 }
@@ -921,10 +1737,9 @@ chatForm.addEventListener("submit", (event) => {
   const assistantMessage = addMessage("Waiting for the backend…", "assistant");
   assistantMessage.label.textContent = "LECTUREMATE · WAITING";
   assistantMessage.bubble.classList.add("loading");
+  chatHistoryVideoId = activeVideoId;
   messageInput.value = "";
   messageInput.style.height = "auto";
-  messageInput.disabled = true;
-  chatForm.querySelector('button[type="submit"]').disabled = true;
   sendChatQuestion(text, assistantMessage);
 });
 
@@ -942,12 +1757,23 @@ messageInput.addEventListener("keydown", (event) => {
 
 quickActionButtons.forEach((button) => {
   button.addEventListener("click", () => {
+    if (button.dataset.action === "visualize") {
+      const target = getVisualizationTarget();
+      if (!target) {
+        showNotice("Ask about or select a lecture concept before visualizing it.");
+        return;
+      }
+      sendVisualizationRequest(target.question, target.concept);
+      return;
+    }
     messageInput.value = button.dataset.prompt || "";
     messageInput.focus();
     messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
     messageInput.dispatchEvent(new Event("input"));
   });
 });
+
+resetConversationButton.addEventListener("click", resetConversation);
 
 document.querySelector("#settingsButton").addEventListener("click", () => {
   settingsDialog.showModal();

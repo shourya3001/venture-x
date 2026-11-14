@@ -2,7 +2,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const { calculateCoverage, chunkTranscript, parseTranscript } = require("../sidepanel/transcript-engine.js");
+const {
+  calculateCoverage,
+  chunkTranscript,
+  parseTranscript,
+  searchKnowledgeBase
+} = require("../sidepanel/transcript-engine.js");
 
 const fixturesPath = path.join(__dirname, "fixtures");
 const readFixture = (name) => fs.readFileSync(path.join(fixturesPath, name), "utf8");
@@ -95,11 +100,14 @@ test("reports full coverage only when the transcript spans the known duration", 
     { start: -2, end: 10, text: "Negative start must not count as complete coverage." }
   ], 10);
   const full = calculateCoverage(completeSegments, 10);
+  const fullRangeBasis = calculateCoverage([[0, 5], [5, 10]], 10);
   const partial = calculateCoverage(partialSegments, 20);
   const unknown = calculateCoverage(completeSegments, null);
 
   assert.equal(full.percentage, 100);
   assert.equal(full.complete, true);
+  assert.equal(fullRangeBasis.percentage, 100);
+  assert.equal(fullRangeBasis.complete, true);
   assert.equal(internalGap.percentage, 80);
   assert.equal(internalGap.complete, false);
   assert.equal(outOfRange.percentage, 100);
@@ -110,4 +118,58 @@ test("reports full coverage only when the transcript spans the known duration", 
   assert.equal(partial.complete, false);
   assert.equal(unknown.percentage, null);
   assert.equal(unknown.complete, false);
+});
+
+test("keyword retrieval finds transcript passages and matching knowledge-base concepts", () => {
+  const segments = [
+    { start: 17, end: 23, text: "Degree of polymerisation, or DP, counts repeat units." },
+    { start: 23, end: 28, text: "Polyethylene forms by addition polymerisation of ethene." }
+  ];
+  const chunks = chunkTranscript(segments, { maxChars: 100, overlapChars: 0 });
+  const knowledgeBase = {
+    topics: [],
+    concepts: [{
+      concept: "Degree of polymerisation",
+      explanation: "The average number of repeat units in a polymer chain.",
+      prerequisites: [],
+      relatedConcepts: [],
+      variables: [],
+      timestamps: [17],
+      evidence: [{ segmentIndex: 0, timestamp: 17, quote: segments[0].text }]
+    }],
+    glossary: [{
+      term: "Degree of polymerisation",
+      abbreviation: "DP",
+      definition: "The average number of repeat units in a polymer chain.",
+      instructorTerminology: "degree of polymerisation",
+      timestamp: 17,
+      timestamps: [17],
+      evidence: [{ segmentIndex: 0, timestamp: 17, quote: segments[0].text }]
+    }]
+  };
+
+  const results = searchKnowledgeBase("degree polymerisation", knowledgeBase, chunks, 8);
+
+  assert.ok(results.some((result) => result.type === "transcript" &&
+    result.segmentIndexes.includes(0) && result.timestamps.includes(17)));
+  assert.ok(results.some((result) => result.type === "concept" &&
+    result.title === "Degree of polymerisation"));
+  assert.ok(results.some((result) => result.type === "glossary" &&
+    result.title === "Degree of polymerisation"));
+  assert.deepEqual(searchKnowledgeBase("unmatched solvent", knowledgeBase, chunks), []);
+
+  const variableResults = searchKnowledgeBase("what does M mean", {
+    topics: [],
+    concepts: [{
+      concept: "Molecular weight",
+      explanation: "A polymer property.",
+      prerequisites: [],
+      relatedConcepts: [],
+      variables: [{ symbol: "M", meaning: "molecular weight" }],
+      timestamps: [30],
+      evidence: []
+    }]
+  }, []);
+  assert.ok(variableResults.some((result) => result.type === "concept" &&
+    result.title === "Molecular weight"));
 });
